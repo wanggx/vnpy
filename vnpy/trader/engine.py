@@ -51,6 +51,12 @@ from .wechat import (
     WeixinError,
     send_text,
 )
+from .wecom import (
+    WecomError,
+    mask_webhook_url,
+    normalize_webhook_url,
+    send_text as send_wecom_text,
+)
 
 
 EngineType = TypeVar("EngineType", bound="BaseEngine")
@@ -164,6 +170,7 @@ class MainEngine:
 
         self.add_engine(EmailEngine)
         self.add_engine(WechatEngine)
+        self.add_engine(WecomEngine)
 
     def write_log(self, msg: str, source: str = "MainEngine") -> None:
         """
@@ -185,6 +192,9 @@ class MainEngine:
 
         wechat_engine: WechatEngine = cast(WechatEngine, self.get_engine("wechat"))
         wechat_engine.send_wechat(f"{subject}\n{content}")
+
+        wecom_engine: WecomEngine = cast(WecomEngine, self.get_engine("wecom"))
+        wecom_engine.send_wecom(f"{subject}\n{content}")
 
     def get_gateway(self, gateway_name: str) -> BaseGateway | None:
         """
@@ -832,6 +842,186 @@ class WechatEngine(BaseEngine):
                     _("微信推送失败：{}").format(exc),
                     self.engine_name,
                 )
+
+    def close(self) -> None:
+        """"""
+        self.deactivate()
+
+
+class WecomEngine(BaseEngine):
+    """
+    Provides WeCom group robot push notification function.
+    """
+
+    setting_filename: str = "wecom_setting.json"
+
+    def __init__(self, main_engine: MainEngine, event_engine: EventEngine) -> None:
+        """"""
+        super().__init__(main_engine, event_engine, "wecom")
+
+        self.webhook_urls: list[str] = []
+        self.send_interval: int = 60
+        self.last_ts: float | None = None
+
+        self.pending_msgs: list[str] = []
+        self.queue: Queue[str] = Queue()
+        self.thread: Thread | None = None
+        self.active: bool = False
+
+        self.load_setting()
+
+        if self.webhook_urls:
+            self.activate()
+
+    def load_setting(self) -> None:
+        """Load webhook URLs and send interval from json file."""
+        data: dict[str, Any] = load_json(self.setting_filename)
+
+        values: Any = data.get("webhook_urls", [])
+        if isinstance(values, str):
+            values = [values]
+
+        if not values:
+            legacy_value: Any = data.get("webhook_url") or data.get("webhook_key")
+            if legacy_value:
+                values = [legacy_value]
+
+        if isinstance(values, list):
+            for value in values:
+                if not isinstance(value, str):
+                    continue
+                try:
+                    url: str = normalize_webhook_url(value)
+                except WecomError:
+                    continue
+                if url not in self.webhook_urls:
+                    self.webhook_urls.append(url)
+
+        send_interval: Any = data.get("send_interval")
+        if isinstance(send_interval, int) and send_interval >= 0:
+            self.send_interval = send_interval
+
+    def save_setting(self) -> None:
+        """Persist current state back to json file."""
+        data: dict[str, Any] = {
+            "webhook_urls": self.webhook_urls,
+            "send_interval": self.send_interval,
+        }
+        save_json(self.setting_filename, data)
+
+    def configure(self, webhook_urls: list[str], send_interval: int) -> None:
+        """Validate, save and activate a new configuration."""
+        normalized_urls: list[str] = []
+        for value in webhook_urls:
+            url: str = normalize_webhook_url(value)
+            if url not in normalized_urls:
+                normalized_urls.append(url)
+
+        if send_interval < 0:
+            raise WecomError(_("企业微信推送间隔不能小于 0"))
+
+        self.deactivate()
+        self._clear_messages()
+
+        self.webhook_urls = normalized_urls
+        self.send_interval = send_interval
+        self.last_ts = None
+
+        self.save_setting()
+
+        if self.webhook_urls:
+            self.activate()
+
+    def clear_setting(self) -> None:
+        """Clear webhook configuration and pending messages."""
+        self.configure([], self.send_interval)
+
+    def activate(self) -> None:
+        """Start worker thread."""
+        self.start()
+
+    def deactivate(self) -> None:
+        """Stop worker thread."""
+        self.stop()
+
+    def start(self) -> None:
+        """Start WeCom sending worker."""
+        if self.active:
+            return
+
+        self.active = True
+        self.thread = Thread(target=self.run)
+        self.thread.start()
+
+    def stop(self) -> None:
+        """Stop WeCom sending worker."""
+        if not self.active:
+            return
+
+        self.active = False
+
+        if (
+            self.thread
+            and self.thread.is_alive()
+            and self.thread is not current_thread()
+        ):
+            self.thread.join()
+
+    def send_wecom(self, msg: str) -> bool:
+        """Queue a text message for WeCom push."""
+        if not self.webhook_urls:
+            return False
+
+        self.queue.put(msg)
+        return True
+
+    def run(self) -> None:
+        """Send queued messages to every configured group robot."""
+        while self.active:
+            try:
+                msg: str = self.queue.get(block=True, timeout=1)
+                self.pending_msgs.append(msg)
+            except Empty:
+                pass
+
+            while True:
+                try:
+                    self.pending_msgs.append(self.queue.get_nowait())
+                except Empty:
+                    break
+
+            if not self.pending_msgs or not self.webhook_urls:
+                continue
+
+            gap: float = self.send_interval
+            if gap > 0 and self.last_ts is not None:
+                wait_secs: float = self.last_ts + gap - time.monotonic()
+                if wait_secs > 0:
+                    continue
+
+            msgs: list[str] = list(self.pending_msgs)
+            self.pending_msgs.clear()
+            self.last_ts = time.monotonic()
+            text: str = "\n".join(msgs)
+
+            for webhook_url in list(self.webhook_urls):
+                try:
+                    send_wecom_text(webhook_url, text)
+                except WecomError as exc:
+                    target: str = mask_webhook_url(webhook_url)
+                    self.main_engine.write_log(
+                        _("企业微信推送失败（{}）：{}").format(target, exc),
+                        self.engine_name,
+                    )
+
+    def _clear_messages(self) -> None:
+        """Clear pending and queued messages."""
+        self.pending_msgs.clear()
+        while True:
+            try:
+                self.queue.get_nowait()
+            except Empty:
+                break
 
     def close(self) -> None:
         """"""

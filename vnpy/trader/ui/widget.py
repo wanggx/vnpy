@@ -17,7 +17,7 @@ import qrcode
 
 from .qt import QtCore, QtGui, QtWidgets, Qt
 from ..constant import Direction, Exchange, Offset, OrderType
-from ..engine import MainEngine, Event, EventEngine, WechatEngine
+from ..engine import MainEngine, Event, EventEngine, WechatEngine, WecomEngine
 from ..event import (
     EVENT_QUOTE,
     EVENT_TICK,
@@ -1708,3 +1708,193 @@ class WechatDialog(QtWidgets.QDialog):
             self.worker.wait(2000)
 
         super().closeEvent(event)
+
+
+class WecomDialog(QtWidgets.QDialog):
+    """
+    WeCom group robot configuration dialog.
+    """
+
+    def __init__(self, main_engine: MainEngine, event_engine: EventEngine) -> None:
+        """"""
+        super().__init__()
+
+        self.main_engine: MainEngine = main_engine
+        self.event_engine: EventEngine = event_engine
+        self.wecom_engine: WecomEngine = cast(
+            WecomEngine,
+            main_engine.get_engine("wecom"),
+        )
+
+        self.init_ui()
+        self.refresh_status()
+
+    def init_ui(self) -> None:
+        """"""
+        self.setWindowTitle(_("企业微信通知"))
+        self.setMinimumWidth(560)
+
+        description: QtWidgets.QLabel = QtWidgets.QLabel(
+            _(
+                "请填写企业微信群机器人的 Webhook 地址，每行一个。\n"
+                "Webhook 中的 key 属于敏感凭证，请勿分享或提交到代码仓库。"
+            )
+        )
+        description.setWordWrap(True)
+
+        self.webhook_edit: QtWidgets.QPlainTextEdit = QtWidgets.QPlainTextEdit()
+        self.webhook_edit.setPlaceholderText(
+            "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
+        )
+        self.webhook_edit.setMinimumHeight(150)
+
+        self.interval_spin: QtWidgets.QSpinBox = QtWidgets.QSpinBox()
+        self.interval_spin.setRange(1, 8640)
+        self.interval_spin.setSuffix(_(" 秒"))
+        self.interval_spin.setToolTip(
+            _(
+                "控制两次企业微信推送之间的间隔时间。\n"
+                "间隔内的新消息会暂存，并在下次推送时合并发送。"
+            )
+        )
+
+        form: QtWidgets.QFormLayout = QtWidgets.QFormLayout()
+        form.setLabelAlignment(
+            QtCore.Qt.AlignmentFlag.AlignRight
+            | QtCore.Qt.AlignmentFlag.AlignTop
+        )
+        form.addRow(_("Webhook："), self.webhook_edit)
+        form.addRow(_("推送间隔："), self.interval_spin)
+
+        self.status_label: QtWidgets.QLabel = QtWidgets.QLabel()
+
+        save_button: QtWidgets.QPushButton = QtWidgets.QPushButton(_("保存"))
+        save_button.clicked.connect(self.save_configuration)
+
+        self.test_button: QtWidgets.QPushButton = QtWidgets.QPushButton(_("测试消息"))
+        self.test_button.clicked.connect(self.send_test_message)
+
+        clear_button: QtWidgets.QPushButton = QtWidgets.QPushButton(_("清除配置"))
+        clear_button.clicked.connect(self.clear_configuration)
+
+        close_button: QtWidgets.QPushButton = QtWidgets.QPushButton(_("关闭"))
+        close_button.clicked.connect(self.accept)
+
+        buttons: QtWidgets.QHBoxLayout = QtWidgets.QHBoxLayout()
+        buttons.addWidget(save_button)
+        buttons.addWidget(self.test_button)
+        buttons.addWidget(clear_button)
+        buttons.addStretch()
+        buttons.addWidget(close_button)
+
+        layout: QtWidgets.QVBoxLayout = QtWidgets.QVBoxLayout()
+        layout.addWidget(description)
+        layout.addLayout(form)
+        layout.addWidget(self.status_label)
+        layout.addLayout(buttons)
+        self.setLayout(layout)
+
+    def refresh_status(self) -> None:
+        """Refresh widgets from the current engine configuration."""
+        urls: list[str] = self.wecom_engine.webhook_urls
+        self.webhook_edit.setPlainText("\n".join(urls))
+        self.interval_spin.setValue(max(1, self.wecom_engine.send_interval))
+
+        if urls:
+            self.status_label.setText(
+                _("状态：已配置 {} 个企业微信群").format(len(urls))
+            )
+            self.test_button.setEnabled(True)
+        else:
+            self.status_label.setText(_("状态：未配置"))
+            self.test_button.setEnabled(False)
+
+    def save_configuration(self) -> bool:
+        """Validate and persist the configuration."""
+        values: list[str] = self._get_webhook_values()
+        if not values:
+            QtWidgets.QMessageBox.warning(
+                self,
+                _("企业微信通知"),
+                _("请至少填写一个企业微信 Webhook 地址"),
+            )
+            return False
+
+        try:
+            self.wecom_engine.configure(values, self.interval_spin.value())
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                _("企业微信配置失败"),
+                str(exc),
+            )
+            return False
+
+        self.refresh_status()
+        QtWidgets.QMessageBox.information(
+            self,
+            _("企业微信通知"),
+            _("企业微信配置已保存"),
+        )
+        return True
+
+    def send_test_message(self) -> None:
+        """Save current values and queue a test message."""
+        values: list[str] = self._get_webhook_values()
+        if not values:
+            QtWidgets.QMessageBox.warning(
+                self,
+                _("企业微信通知"),
+                _("请至少填写一个企业微信 Webhook 地址"),
+            )
+            return
+
+        try:
+            self.wecom_engine.configure(values, self.interval_spin.value())
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(
+                self,
+                _("企业微信配置失败"),
+                str(exc),
+            )
+            return
+
+        if not self.wecom_engine.send_wecom(
+            _("VeighNa Trader 企业微信消息推送测试")
+        ):
+            QtWidgets.QMessageBox.warning(
+                self,
+                _("企业微信通知"),
+                _("请至少填写一个企业微信 Webhook 地址"),
+            )
+            return
+
+        self.refresh_status()
+        QtWidgets.QMessageBox.information(
+            self,
+            _("测试消息"),
+            _("测试消息已加入推送队列！"),
+        )
+
+    def clear_configuration(self) -> None:
+        """Confirm and clear all WeCom webhooks."""
+        reply: QtWidgets.QMessageBox.StandardButton = QtWidgets.QMessageBox.question(
+            self,
+            _("清除配置"),
+            _("确认清除所有企业微信 Webhook？"),
+            QtWidgets.QMessageBox.StandardButton.Yes
+            | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No,
+        )
+
+        if reply == QtWidgets.QMessageBox.StandardButton.Yes:
+            self.wecom_engine.clear_setting()
+            self.refresh_status()
+
+    def _get_webhook_values(self) -> list[str]:
+        """Return non-empty webhook values from the editor."""
+        return [
+            line.strip()
+            for line in self.webhook_edit.toPlainText().splitlines()
+            if line.strip()
+        ]

@@ -27,7 +27,8 @@ from .widget import (
     TradingWidget,
     AboutDialog,
     GlobalDialog,
-    WechatDialog
+    WechatDialog,
+    WecomDialog,
 )
 from ..engine import MainEngine, BaseApp, EmailEngine
 from ..utility import get_icon_path, TRADER_DIR
@@ -146,6 +147,11 @@ class MainWindow(QtWidgets.QMainWindow):
         wechat_action: QtGui.QAction = QtGui.QAction(_("微信"), self)
         wechat_action.triggered.connect(self.open_wechat_dialog)
         bar.addAction(wechat_action)
+
+        # WeCom notification
+        wecom_action: QtGui.QAction = QtGui.QAction(_("企业微信"), self)
+        wecom_action.triggered.connect(self.open_wecom_dialog)
+        bar.addAction(wecom_action)
 
         # Help menu
         help_menu: QtWidgets.QMenu = bar.addMenu(_("帮助"))
@@ -344,4 +350,11 @@ class MainWindow(QtWidgets.QMainWindow):
         Open WeChat notification dialog.
         """
         dialog: WechatDialog = WechatDialog(self.main_engine, self.event_engine)
+        dialog.exec()
+
+    def open_wecom_dialog(self) -> None:
+        """
+        Open WeCom notification dialog.
+        """
+        dialog: WecomDialog = WecomDialog(self.main_engine, self.event_engine)
         dialog.exec()
