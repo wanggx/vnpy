@@ -307,10 +307,15 @@ class QuoteData(BaseData):
 class SubscribeRequest:
     """
     Request sending to specific gateway for subscribing tick data update.
+
+    Callers that do not provide subscriber identity share the default
+    app and subscriber names for backward compatibility.
     """
 
     symbol: str
     exchange: Exchange
+    app_name: str = "default"
+    subscriber_name: str = "default"
 
     def __post_init__(self) -> None:
         """"""

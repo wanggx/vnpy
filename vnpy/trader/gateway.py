@@ -193,6 +193,15 @@ class BaseGateway(ABC):
         """
         pass
 
+    def unsubscribe(self, req: SubscribeRequest) -> None:
+        """
+        Unsubscribe tick data update.
+
+        Gateways without unsubscribe support can keep the default no-op
+        implementation for backward compatibility.
+        """
+        return None
+
     @abstractmethod
     def send_order(self, req: OrderRequest) -> str:
         """
