@@ -14,6 +14,7 @@ from vnpy.event import Event, EventEngine
 from .app import BaseApp
 from .event import (
     EVENT_TICK,
+    EVENT_TICK_UNSUBSCRIBE,
     EVENT_ORDER,
     EVENT_TRADE,
     EVENT_POSITION,
@@ -404,6 +405,7 @@ class OmsEngine(BaseEngine):
     def register_event(self) -> None:
         """"""
         self.event_engine.register(EVENT_TICK, self.process_tick_event)
+        self.event_engine.register(EVENT_TICK_UNSUBSCRIBE, self.process_tick_unsubscribe_event)
         self.event_engine.register(EVENT_ORDER, self.process_order_event)
         self.event_engine.register(EVENT_TRADE, self.process_trade_event)
         self.event_engine.register(EVENT_POSITION, self.process_position_event)
@@ -415,6 +417,11 @@ class OmsEngine(BaseEngine):
         """"""
         tick: TickData = event.data
         self.ticks[tick.vt_symbol] = tick
+
+    def process_tick_unsubscribe_event(self, event: Event) -> None:
+        """"""
+        req: SubscribeRequest = event.data
+        self.ticks.pop(req.vt_symbol, None)
 
     def process_order_event(self, event: Event) -> None:
         """"""

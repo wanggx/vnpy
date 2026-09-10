@@ -21,6 +21,7 @@ from ..engine import MainEngine, Event, EventEngine, WechatEngine, WecomEngine
 from ..event import (
     EVENT_QUOTE,
     EVENT_TICK,
+    EVENT_TICK_UNSUBSCRIBE,
     EVENT_TRADE,
     EVENT_ORDER,
     EVENT_POSITION,
@@ -246,6 +247,7 @@ class BaseMonitor(QtWidgets.QTableWidget):
     event_type: str = ""
     data_key: str = ""
     sorting: bool = False
+    show_row_numbers: bool = False
     headers: dict = {}
 
     signal: QtCore.Signal = QtCore.Signal(Event)
@@ -257,6 +259,7 @@ class BaseMonitor(QtWidgets.QTableWidget):
         self.main_engine: MainEngine = main_engine
         self.event_engine: EventEngine = event_engine
         self.cells: dict[str, dict] = {}
+        self.row_trackers: dict[str, QtWidgets.QTableWidgetItem] = {}
 
         self.init_ui()
         self.load_setting()
@@ -276,7 +279,7 @@ class BaseMonitor(QtWidgets.QTableWidget):
         labels: list = [d["display"] for d in self.headers.values()]
         self.setHorizontalHeaderLabels(labels)
 
-        self.verticalHeader().setVisible(False)
+        self.verticalHeader().setVisible(self.show_row_numbers)
         self.setEditTriggers(self.EditTrigger.NoEditTriggers)
         self.setAlternatingRowColors(True)
         self.setSortingEnabled(self.sorting)
@@ -335,12 +338,15 @@ class BaseMonitor(QtWidgets.QTableWidget):
         self.insertRow(0)
 
         row_cells: dict = {}
+        row_tracker: QtWidgets.QTableWidgetItem | None = None
         for column, header in enumerate(self.headers.keys()):
             setting: dict = self.headers[header]
 
             content = data.__getattribute__(header)
             cell: QtWidgets.QTableWidgetItem = setting["cell"](content, data)
             self.setItem(0, column, cell)
+            if row_tracker is None:
+                row_tracker = cell
 
             if setting["update"]:
                 row_cells[header] = cell
@@ -348,6 +354,8 @@ class BaseMonitor(QtWidgets.QTableWidget):
         if self.data_key:
             key: str = data.__getattribute__(self.data_key)
             self.cells[key] = row_cells
+            if row_tracker:
+                self.row_trackers[key] = row_tracker
 
     def update_old_row(self, data: Any) -> None:
         """
@@ -359,6 +367,26 @@ class BaseMonitor(QtWidgets.QTableWidget):
         for header, cell in row_cells.items():
             content = data.__getattribute__(header)
             cell.set_content(content, data)
+
+    def remove_old_row(self, key: str) -> None:
+        """
+        Remove an old row from table.
+        """
+        row_tracker: QtWidgets.QTableWidgetItem | None = self.row_trackers.pop(key, None)
+        self.cells.pop(key, None)
+
+        if not row_tracker:
+            return
+
+        if self.sorting:
+            self.setSortingEnabled(False)
+
+        row: int = self.row(row_tracker)
+        if row >= 0:
+            self.removeRow(row)
+
+        if self.sorting:
+            self.setSortingEnabled(True)
 
     def resize_columns(self) -> None:
         """
@@ -424,6 +452,8 @@ class TickMonitor(BaseMonitor):
     event_type: str = EVENT_TICK
     data_key: str = "vt_symbol"
     sorting: bool = True
+    show_row_numbers: bool = True
+    signal_unsubscribe: QtCore.Signal = QtCore.Signal(Event)
 
     headers: dict = {
         "symbol": {"display": _("代码"), "cell": BaseCell, "update": False},
@@ -441,6 +471,17 @@ class TickMonitor(BaseMonitor):
         "datetime": {"display": _("时间"), "cell": TimeCell, "update": True},
         "gateway_name": {"display": _("接口"), "cell": BaseCell, "update": False},
     }
+
+    def register_event(self) -> None:
+        """"""
+        super().register_event()
+        self.signal_unsubscribe.connect(self.process_unsubscribe_event)
+        self.event_engine.register(EVENT_TICK_UNSUBSCRIBE, self.signal_unsubscribe.emit)
+
+    def process_unsubscribe_event(self, event: Event) -> None:
+        """"""
+        req: SubscribeRequest = event.data
+        self.remove_old_row(req.vt_symbol)
 
 
 class LogMonitor(BaseMonitor):
