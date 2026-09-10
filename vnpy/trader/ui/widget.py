@@ -279,7 +279,34 @@ class BaseMonitor(QtWidgets.QTableWidget):
         labels: list = [d["display"] for d in self.headers.values()]
         self.setHorizontalHeaderLabels(labels)
 
-        self.verticalHeader().setVisible(self.show_row_numbers)
+        vertical_header: QtWidgets.QHeaderView = self.verticalHeader()
+        vertical_header.setVisible(self.show_row_numbers)
+        if self.show_row_numbers:
+            vertical_header.setDefaultAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            vertical_header.setHighlightSections(False)
+            vertical_header.setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Fixed)
+            vertical_header.setFixedWidth(28)
+            vertical_header.setDefaultSectionSize(24)
+            self.setCornerButtonEnabled(False)
+            self.setStyleSheet(
+                """
+                QTableWidget QHeaderView::section:vertical {
+                    background-color: #3f4d5d;
+                    color: #d7e0ea;
+                    border: 0;
+                    border-right: 1px solid #1f2b36;
+                    padding: 0;
+                    font-weight: 500;
+                }
+
+                QTableWidget QTableCornerButton::section {
+                    background-color: #3f4d5d;
+                    border: 0;
+                    border-right: 1px solid #1f2b36;
+                    border-bottom: 1px solid #1f2b36;
+                }
+                """
+            )
         self.setEditTriggers(self.EditTrigger.NoEditTriggers)
         self.setAlternatingRowColors(True)
         self.setSortingEnabled(self.sorting)
