@@ -128,6 +128,7 @@ class OrderData(BaseData):
     status: Status = Status.SUBMITTING
     datetime: Datetime | None = None
     reference: str = ""
+    mark: str = ""                         # trigger mark of the order
 
     def __post_init__(self) -> None:
         """"""
@@ -336,6 +337,7 @@ class OrderRequest:
     price: float = 0
     offset: Offset = Offset.NONE
     reference: str = ""
+    mark: str = ""                         # trigger mark of the order
 
     def __post_init__(self) -> None:
         """"""
@@ -355,6 +357,7 @@ class OrderRequest:
             price=self.price,
             volume=self.volume,
             reference=self.reference,
+            mark=self.mark,
             gateway_name=gateway_name,
         )
         return order

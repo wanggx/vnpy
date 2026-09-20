@@ -562,6 +562,7 @@ class OrderMonitor(BaseMonitor):
     headers: dict = {
         "orderid": {"display": _("委托号"), "cell": BaseCell, "update": False},
         "reference": {"display": _("来源"), "cell": BaseCell, "update": False},
+        "mark": {"display": _("标注"), "cell": BaseCell, "update": False},
         "symbol": {"display": _("代码"), "cell": BaseCell, "update": False},
         "exchange": {"display": _("交易所"), "cell": EnumCell, "update": False},
         "type": {"display": _("类型"), "cell": EnumCell, "update": False},
