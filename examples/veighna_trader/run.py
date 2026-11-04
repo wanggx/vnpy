@@ -24,7 +24,7 @@ from vnpy_ctabacktester import CtaBacktesterApp
 # from vnpy_algotrading import AlgoTradingApp
 # from vnpy_optionmaster import OptionMasterApp
 # from vnpy_portfoliostrategy import PortfolioStrategyApp
-# from vnpy_scripttrader import ScriptTraderApp
+from vnpy_scripttrader import ScriptTraderApp
 # from vnpy_chartwizard import ChartWizardApp
 # from vnpy_rpcservice import RpcServiceApp
 # from vnpy_excelrtd import ExcelRtdApp
