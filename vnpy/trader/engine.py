@@ -5,6 +5,7 @@ import traceback
 from abc import ABC, abstractmethod
 from datetime import datetime
 from email.message import EmailMessage
+from functools import partial
 from queue import Empty, Queue
 from threading import Thread, current_thread
 from typing import Any, TypeVar, cast
@@ -96,6 +97,11 @@ class MainEngine:
             self.event_engine: EventEngine = event_engine
         else:
             self.event_engine = EventEngine()
+        # 事件引擎的兜底日志（handler 异常等）统一走主引擎 write_log：
+        # 界面日志栏与 vt_*.log 都能看到，来源标为 EventEngine，级别 ERROR
+        self.event_engine.log_func = partial(
+            self.write_log, source="EventEngine", level=ERROR,
+        )
         self.event_engine.start()
 
         self.gateways: dict[str, BaseGateway] = {}
@@ -173,11 +179,11 @@ class MainEngine:
         self.add_engine(WechatEngine)
         self.add_engine(WecomEngine)
 
-    def write_log(self, msg: str, source: str = "MainEngine") -> None:
+    def write_log(self, msg: str, source: str = "MainEngine", level: int = INFO) -> None:
         """
         Put log event with specific message.
         """
-        log: LogData = LogData(msg=msg, gateway_name=source)
+        log: LogData = LogData(msg=msg, gateway_name=source, level=level)
         event: Event = Event(EVENT_LOG, log)
         self.event_engine.put(event)
 

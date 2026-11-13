@@ -2,15 +2,19 @@
 Event-driven framework of VeighNa framework.
 """
 
+import traceback
 from collections import defaultdict
 from collections.abc import Callable
 from queue import Empty, Queue
 from threading import Thread
-from time import sleep
+from time import sleep, monotonic
 from typing import Any
 
 
 EVENT_TIMER = "eTimer"
+
+# 兜底日志：同一 (事件类型, 异常类型, 出错位置) 在此间隔内只报一次，避免刷屏
+HANDLER_ERROR_LOG_INTERVAL: float = 5.0
 
 
 class Event:
@@ -51,17 +55,58 @@ class EventEngine:
         self._timer: Thread = Thread(target=self._run_timer)
         self._handlers: defaultdict = defaultdict(list)
         self._general_handlers: list = []
+        # handler 异常兜底日志的限流时间戳
+        self._handler_error_at: dict[str, float] = {}
+        # 日志输出钩子：由 MainEngine 注入 write_log（界面日志栏 + 日志文件）
+        self.log_func: Callable[[str], Any] | None = None
 
     def _run(self) -> None:
         """
         Get event from queue and then process it.
+
+        单个 handler 抛出的异常绝不能让本线程退出：事件引擎是整个应用的中枢，
+        线程一死，所有事件（委托/成交/持仓/日志/定时任务）都会积压在队列里，
+        整个 vnpy 客户端随即"假死"。所以这里做整体兜底：异常交给主引擎
+        write_log 输出后，继续处理下一个事件。
         """
         while self._active:
             try:
                 event: Event = self._queue.get(block=True, timeout=1)
-                self._process(event)
             except Empty:
-                pass
+                continue
+
+            if not self._active:
+                break
+
+            try:
+                self._process(event)
+            except Exception as ex:  # noqa: BLE001 - 兜底，见方法注释
+                self._report_handler_error(event, ex)
+
+    def _report_handler_error(self, event: Event, ex: BaseException) -> None:
+        """把 handler 异常交给主引擎 write_log 输出（同一异常限流，避免刷屏）。"""
+        log_func = self.log_func
+        if log_func is None:
+            return
+
+        frame = traceback.extract_tb(ex.__traceback__)[-1] if ex.__traceback__ else None
+        where: str = (
+            f"{frame.filename}:{frame.lineno} in {frame.name}" if frame else "unknown"
+        )
+        key: str = f"{event.type}|{type(ex).__name__}|{where}"
+        now: float = monotonic()
+        if now - self._handler_error_at.get(key, 0.0) < HANDLER_ERROR_LOG_INTERVAL:
+            return
+        self._handler_error_at[key] = now
+
+        message: str = (
+            f"事件处理异常已隔离，事件引擎继续运行：type={event.type} "
+            f"{type(ex).__name__}: {ex} @ {where}"
+        )
+        try:
+            log_func(message)
+        except Exception:  # noqa: BLE001 - 日志输出失败也不能影响事件分发
+            pass
 
     def _process(self, event: Event) -> None:
         """
